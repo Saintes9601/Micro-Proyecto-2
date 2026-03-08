@@ -1,6 +1,6 @@
 """
 Aplicacion Streamlit para clasificar textos segun los Objetivos de Desarrollo Sostenible (ODS).
-Utiliza el modelo entrenado en el notebook microproyecto2.ipynb.
+Utiliza el pipeline entrenado en el notebook microproyecto2.ipynb.
 """
 import streamlit as st
 import joblib
@@ -9,15 +9,25 @@ import re
 from nltk.corpus import stopwords
 from nltk.stem import SnowballStemmer
 from sklearn.base import BaseEstimator, TransformerMixin
+from gensim.models import Word2Vec
 import nltk
 
 nltk.download('stopwords', quiet=True)
 
-# Necesario para que joblib pueda deserializar el TextPreprocessor guardado en el modelo
+# Constantes de preprocesamiento (misma definicion que en el notebook)
+SPANISH_STOP_WORDS = frozenset(stopwords.words('spanish'))
+SPANISH_STEMMER_CACHE = {}
+
+def _stem_word(word):
+    if word not in SPANISH_STEMMER_CACHE:
+        SPANISH_STEMMER_CACHE[word] = SnowballStemmer('spanish').stem(word)
+    return SPANISH_STEMMER_CACHE[word]
+
+# Clases necesarias para que joblib pueda deserializar el pipeline guardado en el modelo.
+# Deben tener la misma definicion que en el notebook.
 class TextPreprocessor(BaseEstimator, TransformerMixin):
     def __init__(self):
-        self.stemmer = SnowballStemmer('spanish')
-        self.stop_words = set(stopwords.words('spanish'))
+        pass
 
     def fit(self, X, y=None):
         return self
@@ -25,13 +35,45 @@ class TextPreprocessor(BaseEstimator, TransformerMixin):
     def transform(self, X):
         return [self._preprocess(text) for text in X]
 
-    def _preprocess(self, text):
+    @staticmethod
+    def _preprocess(text):
         text = text.lower()
         text = re.sub(r'[^a-záéíóúüñ\s]', '', text)
         tokens = text.split()
-        tokens = [self.stemmer.stem(word) for word in tokens
-                  if word not in self.stop_words and len(word) > 2]
+        tokens = [_stem_word(word) for word in tokens
+                  if word not in SPANISH_STOP_WORDS and len(word) > 2]
         return ' '.join(tokens)
+
+
+class Word2VecVectorizer(BaseEstimator, TransformerMixin):
+    """Wrapper sklearn-compatible de Word2Vec para usar en Pipeline."""
+    def __init__(self, vector_size=200, window=5, min_count=3, epochs=20, seed=42):
+        self.vector_size = vector_size
+        self.window = window
+        self.min_count = min_count
+        self.epochs = epochs
+        self.seed = seed
+
+    def fit(self, X, y=None):
+        tokenized = [text.split() for text in X]
+        self.model_ = Word2Vec(
+            sentences=tokenized, vector_size=self.vector_size,
+            window=self.window, min_count=self.min_count,
+            workers=4, seed=self.seed, epochs=self.epochs
+        )
+        return self
+
+    def transform(self, X):
+        tokenized = [text.split() for text in X]
+        vectors = []
+        for tokens in tokenized:
+            word_vecs = [self.model_.wv[w] for w in tokens if w in self.model_.wv]
+            if len(word_vecs) == 0:
+                vectors.append(np.zeros(self.vector_size))
+            else:
+                vectors.append(np.mean(word_vecs, axis=0))
+        return np.array(vectors)
+
 
 # --- Configuracion de la pagina ---
 st.set_page_config(
@@ -51,39 +93,7 @@ except FileNotFoundError:
     st.error("No se encontro el archivo 'modelo_ods.joblib'. Ejecuta primero el notebook para generar el modelo.")
     st.stop()
 
-# --- Funciones de procesamiento ---
-def preprocess_text(text):
-    """Aplica el mismo preprocesamiento del pipeline del notebook."""
-    stemmer = SnowballStemmer('spanish')
-    stop_words = set(stopwords.words('spanish'))
-    text = text.lower()
-    text = re.sub(r'[^a-záéíóúüñ\s]', '', text)
-    tokens = text.split()
-    tokens = [stemmer.stem(word) for word in tokens if word not in stop_words and len(word) > 2]
-    return ' '.join(tokens)
-
-def predecir(texto):
-    """Procesa el texto y genera la prediccion del ODS."""
-    texto_procesado = preprocess_text(texto)
-    representacion = artefactos['representacion']
-
-    if 'TF-IDF' in representacion:
-        vectorizer = artefactos['vectorizer']
-        X = vectorizer.transform([texto_procesado])
-        X = artefactos['reductor'].transform(X)
-    else:
-        # Word2Vec
-        w2v_model = artefactos['w2v_model']
-        tokens = texto_procesado.split()
-        vectors = [w2v_model.wv[word] for word in tokens if word in w2v_model.wv]
-        if len(vectors) == 0:
-            doc_vector = np.zeros(w2v_model.wv.vector_size)
-        else:
-            doc_vector = np.mean(vectors, axis=0)
-        X = artefactos['reductor'].transform([doc_vector])
-
-    prediccion = artefactos['clasificador'].predict(X)[0]
-    return prediccion
+pipeline = artefactos['pipeline']
 
 # --- Interfaz ---
 st.title("Clasificador de Textos - Objetivos de Desarrollo Sostenible (ODS)")
@@ -106,14 +116,14 @@ texto_input = st.text_area(
 if st.button("Clasificar", type="primary"):
     if texto_input.strip():
         with st.spinner("Procesando texto..."):
-            ods_predicho = predecir(texto_input)
+            ods_predicho = pipeline.predict([texto_input])[0]
             nombre_ods = artefactos['ods_nombres'].get(ods_predicho, "Desconocido")
 
         st.success(f"**ODS {ods_predicho}: {nombre_ods}**")
         st.markdown(f"""
         **Detalles del modelo:**
-        - Representacion: `{artefactos['representacion']}`
-        - Clasificador: `{type(artefactos['clasificador']).__name__}`
+        - Pipeline: `{artefactos.get('representacion', 'N/A')}`
+        - Hiperparametros: `{artefactos.get('best_params', 'N/A')}`
         """)
     else:
         st.warning("Por favor, ingresa un texto para clasificar.")
