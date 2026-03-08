@@ -8,9 +8,30 @@ import numpy as np
 import re
 from nltk.corpus import stopwords
 from nltk.stem import SnowballStemmer
+from sklearn.base import BaseEstimator, TransformerMixin
 import nltk
 
 nltk.download('stopwords', quiet=True)
+
+# Necesario para que joblib pueda deserializar el TextPreprocessor guardado en el modelo
+class TextPreprocessor(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        self.stemmer = SnowballStemmer('spanish')
+        self.stop_words = set(stopwords.words('spanish'))
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        return [self._preprocess(text) for text in X]
+
+    def _preprocess(self, text):
+        text = text.lower()
+        text = re.sub(r'[^a-záéíóúüñ\s]', '', text)
+        tokens = text.split()
+        tokens = [self.stemmer.stem(word) for word in tokens
+                  if word not in self.stop_words and len(word) > 2]
+        return ' '.join(tokens)
 
 # --- Configuracion de la pagina ---
 st.set_page_config(
@@ -67,10 +88,10 @@ def predecir(texto):
 # --- Interfaz ---
 st.title("Clasificador de Textos - Objetivos de Desarrollo Sostenible (ODS)")
 st.markdown("""
-Esta aplicacion clasifica textos en espanol segun los **Objetivos de Desarrollo Sostenible (ODS)**
+Esta aplicacion clasifica textos segun los **Objetivos de Desarrollo Sostenible (ODS)**
 de las Naciones Unidas, utilizando tecnicas de procesamiento de lenguaje natural y machine learning.
 
-**Instrucciones:** Ingresa un texto en espanol relacionado con tematicas de desarrollo sostenible
+**Instrucciones:** Ingresa un texto relacionado con tematicas de desarrollo sostenible
 y el modelo predecira a cual ODS corresponde.
 """)
 
@@ -79,7 +100,7 @@ st.divider()
 texto_input = st.text_area(
     "Ingresa el texto a clasificar:",
     height=200,
-    placeholder="Escribe o pega aqui un texto en espanol relacionado con desarrollo sostenible..."
+    placeholder="Escribe o pega aqui un texto relacionado con desarrollo sostenible..."
 )
 
 if st.button("Clasificar", type="primary"):
