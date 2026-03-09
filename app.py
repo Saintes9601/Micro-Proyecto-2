@@ -122,7 +122,7 @@ if st.button("Clasificar", type="primary"):
         st.success(f"**ODS {ods_predicho}: {nombre_ods}**")
         st.markdown(f"""
         **Detalles del modelo:**
-        - Pipeline: `{artefactos.get('representacion', 'N/A')}`
+        - Pipeline: `{artefactos.get('representación', 'N/A')}`
         - Hiperparametros: `{artefactos.get('best_params', 'N/A')}`
         """)
     else:
